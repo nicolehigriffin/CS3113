@@ -9,7 +9,8 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
-#define MAX_BULLETS 5
+#define FIXED_TIMESTEP 0.0166666f
+#define MAX_TIMESTEPS 6
 
 #include "ShaderProgram.h"
 #include "glm/mat4x4.hpp"
@@ -25,6 +26,7 @@
 #endif
 
 SDL_Window* displayWindow;
+using namespace std;
 
 class SheetSprite {
 public:
@@ -77,28 +79,52 @@ public:
     float height;
 };
 
+float lerp(float v0, float v1, float t) {
+    return (1.0-t)*v0 + t*v1;
+}
+
 class Entity {
 public:
+    Entity(const string& name) : name(name) {}
+    
+    void Update() {
+        modelMatrix = glm::mat4(1.0f);
+        modelMatrix = glm::translate(modelMatrix, glm::vec3(positionX, positionY, 0.0f));
+        modelMatrix = glm::scale(modelMatrix, size);
+    }
+    
     void Draw(ShaderProgram program) {
         sprite.Draw(program);
     }
+    
+    string name;
+    
     float positionX;
-    float  positionY;
-    glm::vec3 velocity;
+    float positionY;
+    float width;
+    float height;
+    float rotation;
+    
+    int textureID;
+    
+    float velocityX;
+    float velocityY;
+    
+    float accelerationX = 0.0f;
+    float accelerationY = -0.1f; //gravity
+    
     glm::vec3 size;
     
+    glm::mat4 modelMatrix;
+    
     SheetSprite sprite;
-};
-
-struct GameLevel {
-    Entity player;
-    Entity enemies[8];
-    Entity bullets[30];
-    int score;
-};
-
-struct MainMenu {
-    Entity cowGunTitle[6];
+    
+    bool isStatic;
+    
+    bool collidedTop;
+    bool collidedBottom;
+    bool collidedLeft;
+    bool collidedRight;
 };
 
 GLuint LoadTexture(const char *filePath) {
@@ -106,7 +132,7 @@ GLuint LoadTexture(const char *filePath) {
     unsigned char* image = stbi_load(filePath, &w,  &h, &comp, STBI_rgb_alpha);
     
     if(image == NULL) {
-        std::cout << "Unable to load image. Make sure the path is correct\n";
+        cout << "Unable to load image. Make sure the path is correct\n";
         assert(false);
     }
     
@@ -124,13 +150,9 @@ GLuint LoadTexture(const char *filePath) {
     return retTexture;
 }
 
-void shootBullet(int bulletIndex, std::vector<Entity> bullets, float x) {
-    bullets[bulletIndex].positionX = x;
-    bullets[bulletIndex].positionY = -0.5f;
-    bulletIndex++;
-    if(bulletIndex > MAX_BULLETS-1) {
-        bulletIndex = 0;
-    }
+void createEntity(const string& name, vector<Entity*>& entities) {
+    Entity* entity = new Entity(name);
+    entities.push_back(entity);
 }
 
 //----- MAIN -----//
@@ -149,57 +171,43 @@ int main(int argc, char *argv[]) {
     glm::mat4 projectionMatrix = glm::mat4(1.0f);
     glm::mat4 viewMatrix = glm::mat4(1.0f);
     
+    vector<Entity*> entities;
+    createEntity("exit", entities);
+    createEntity("player", entities);
+    createEntity("platform1", entities);
+    createEntity("platform2", entities);
+    createEntity("platform3", entities);
+    createEntity("platform4", entities);
+    createEntity("platform5", entities);
+    
+    unsigned int spriteSheet1 = LoadTexture("cow.png");
+    unsigned int spriteSheet2 = LoadTexture("platforms_sprites.png");
+    
     //MODEL MATRICES
-    glm::mat4 cowMatrix = glm::mat4(1.0f);
-    cowMatrix = glm::translate(cowMatrix, glm::vec3(0.0f, -0.6f, 0.0f));
-    //row 1
-    glm::mat4 alien1 = glm::mat4(1.0f);
-    alien1 = glm::translate(alien1, glm::vec3(-0.6f, 0.7f, 0.0f));
-    alien1 = glm::scale(alien1, glm::vec3(0.5f, 0.5f, 0.0f));
-    glm::mat4 alien2 = glm::mat4(1.0f);
-    alien2 = glm::translate(alien2, glm::vec3(-0.2f, 0.7f, 0.0f));
-    alien2 = glm::scale(alien2, glm::vec3(0.5f, 0.5f, 0.0f));
-    glm::mat4 alien3 = glm::mat4(1.0f);
-    alien3 = glm::translate(alien3, glm::vec3(0.2f, 0.7f, 0.0f));
-    alien3 = glm::scale(alien3, glm::vec3(0.5f, 0.5f, 0.0f));
-    glm::mat4 alien4 = glm::mat4(1.0f);
-    alien4 = glm::translate(alien4, glm::vec3(0.6f, 0.7f, 0.0f));
-    alien4 = glm::scale(alien4, glm::vec3(0.5f, 0.5f, 0.0f));
-    //row 2
-    glm::mat4 alien5 = glm::mat4(1.0f);
-    alien5 = glm::translate(alien5, glm::vec3(-0.6f, 0.1f, 0.0f));
-    alien5 = glm::scale(alien5, glm::vec3(0.5f, 0.5f, 0.0f));
-    glm::mat4 alien6 = glm::mat4(1.0f);
-    alien6 = glm::translate(alien6, glm::vec3(-0.2f, 0.1f, 0.0f));
-    alien6 = glm::scale(alien6, glm::vec3(0.5f, 0.5f, 0.0f));
-    glm::mat4 alien7 = glm::mat4(1.0f);
-    alien7 = glm::translate(alien7, glm::vec3(0.2f, 0.1f, 0.0f));
-    alien7 = glm::scale(alien7, glm::vec3(0.5f, 0.5f, 0.0f));
-    glm::mat4 alien8 = glm::mat4(1.0f);
-    alien8 = glm::translate(alien8, glm::vec3(0.6f, 0.1f, 0.0f));
-    alien8 = glm::scale(alien8, glm::vec3(0.5f, 0.5f, 0.0f));
-    
-    glm::mat4 bulletMatrix = glm::mat4(1.0f);
-    
-    //LETTERS
-    glm::mat4 letterC = glm::mat4(1.0f);
-    letterC = glm::translate(letterC, glm::vec3(-1.0f, 0.0f, 0.0f));
-    letterC = glm::scale(letterC, glm::vec3(0.3f, 0.3f, 0.0f));
-    glm::mat4 letterO = glm::mat4(1.0f);
-    letterO = glm::translate(letterO, glm::vec3(-0.7f, 0.0f, 0.0f));
-    letterO = glm::scale(letterO, glm::vec3(0.3f, 0.3f, 0.0f));
-    glm::mat4 letterW = glm::mat4(1.0f);
-    letterW = glm::translate(letterW, glm::vec3(-0.4f, 0.0f, 0.0f));
-    letterW = glm::scale(letterW, glm::vec3(0.3f, 0.3f, 0.0f));
-    glm::mat4 letterG = glm::mat4(1.0f);
-    letterG = glm::translate(letterG, glm::vec3(0.4f, 0.0f, 0.0f));
-    letterG = glm::scale(letterG, glm::vec3(0.3f, 0.3f, 0.0f));
-    glm::mat4 letterU = glm::mat4(1.0f);
-    letterU = glm::translate(letterU, glm::vec3(0.7f, 0.0f, 0.0f));
-    letterU = glm::scale(letterU, glm::vec3(0.3f, 0.3f, 0.0f));
-    glm::mat4 letterN = glm::mat4(1.0f);
-    letterN = glm::translate(letterN, glm::vec3(1.0f, 0.0f, 0.0f));
-    letterN = glm::scale(letterN, glm::vec3(0.3f, 0.3f, 0.0f));
+    float position = 0.0f;
+    for (size_t i = 0; i < entities.size(); i++) {
+        if (entities[i]->name.size() == 9) { //platformX is 9 char
+            entities[i]->isStatic = false;
+            entities[i]->positionX = -1.5f + position;
+            entities[i]->positionY = -0.6f;
+            entities[i]->size = glm::vec3(0.5f, 0.5f, 0.0f);
+            entities[i]->sprite = SheetSprite(spriteSheet2, 9, 11, 13, 1);
+            position += 1.0f;
+        } else if (entities[i]->name.size() == 6) { //player
+            entities[i]->isStatic = false;
+            entities[i]->positionX = -1.5f;
+            entities[i]->positionY = -0.2f; //high position, but collision will fix
+            entities[i]->size = glm::vec3(0.6f, 0.6f, 0.0f);
+            entities[i]->sprite = SheetSprite(spriteSheet1, 12, 4, 4, 1);
+        } else if (entities[i]->name.size() == 4) { //exit sign
+            entities[i]->isStatic = true;
+            entities[i]->positionX = 2.5f;
+            entities[i]->positionY = -0.2f;
+            entities[i]->size = glm::vec3(0.3f, 0.35f, 0.0f);
+            entities[i]->sprite = SheetSprite(spriteSheet2, 59, 11, 13, 1);
+        }
+        entities[i]->Update();
+    }
     
     projectionMatrix = glm::ortho(-1.777f, 1.777f, -1.0f, 1.0f, -1.0f, 1.0f);
     
@@ -211,71 +219,8 @@ int main(int argc, char *argv[]) {
     
     const Uint8 *keys = SDL_GetKeyboardState(NULL);
     
-    unsigned int spriteSheetCowTexture = LoadTexture("cow.png");
-    unsigned int spriteSheetAlienTexture = LoadTexture("aliens.png");
-    unsigned int spriteSheetBullet = LoadTexture("bullet.png");
-    unsigned int spriteSheetLetters = LoadTexture("letters.png");
-    
-    std::vector<Entity> entities;
-    Entity cowE;
-    Entity alien1E;
-    Entity alien2E;
-    Entity alien3E;
-    Entity alien4E;
-    Entity alien5E;
-    Entity alien6E;
-    Entity alien7E;
-    Entity alien8E;
-    Entity bulletE;
-    
-    //player
-    cowE.sprite = SheetSprite(spriteSheetCowTexture, 1, 4, 4, 1);
-    //bullet
-    bulletE.sprite = SheetSprite(spriteSheetBullet, 1, 1, 1, 1);
-    //row 1
-    SheetSprite alien1Sprite = SheetSprite(spriteSheetAlienTexture, 1, 12, 8, 1);
-    SheetSprite alien2Sprite = SheetSprite(spriteSheetAlienTexture, 4, 12, 8, 1);
-    SheetSprite alien3Sprite = SheetSprite(spriteSheetAlienTexture, 7, 12, 8, 1);
-    SheetSprite alien4Sprite = SheetSprite(spriteSheetAlienTexture, 10, 12, 8, 1);
-    //row 2
-    SheetSprite alien5Sprite = SheetSprite(spriteSheetAlienTexture, 58, 12, 8, 1);
-    SheetSprite alien6Sprite = SheetSprite(spriteSheetAlienTexture, 55, 12, 8, 1);
-    SheetSprite alien7Sprite = SheetSprite(spriteSheetAlienTexture, 52, 12, 8, 1);
-    SheetSprite alien8Sprite = SheetSprite(spriteSheetAlienTexture, 49, 12, 8, 1);
-    
-    //LETTERS
-    SheetSprite cSprite = SheetSprite(spriteSheetLetters, 67, 16, 16, 1);
-    SheetSprite oSprite = SheetSprite(spriteSheetLetters, 79, 16, 16, 1);
-    SheetSprite wSprite = SheetSprite(spriteSheetLetters, 87, 16, 16, 1);
-    SheetSprite gSprite = SheetSprite(spriteSheetLetters, 71, 16, 16, 1);
-    SheetSprite uSprite = SheetSprite(spriteSheetLetters, 85, 16, 16, 1);
-    SheetSprite nSprite = SheetSprite(spriteSheetLetters, 78, 16, 16, 1);
-    
-    bool shootBullet = false;
-    float cowPos = 0.0f;
-    float bulletForward = -0.5f;
-    float shootLocation = 0.0f;
-    
-    bool alien1Dead = false;
-    bool alien2Dead = false;
-    bool alien3Dead = false;
-    bool alien4Dead = false;
-    bool alien5Dead = false;
-    bool alien6Dead = false;
-    bool alien7Dead = false;
-    bool alien8Dead = false;
-    
-    int bulletIndex = 0;
-    Entity bullets[MAX_BULLETS];
-    for (size_t i=0; i < MAX_BULLETS; i++) {
-        bullets[i].positionX = -100.0f;
-    }
-    
-    std::string mode = "STATE_MAIN_MENU";
-    
-    MainMenu mainMenu;
-    GameLevel gameLevel;
-    
+    float viewPosStartX = -1.5f;
+    float accumulator = 0.0f;
 #ifdef _WINDOWS
     glewInit();
 #endif
@@ -283,155 +228,103 @@ int main(int argc, char *argv[]) {
     SDL_Event event;
     bool done = false;
     while (!done) {
-        
         float ticks = (float)SDL_GetTicks()/1000.0f;
         float elapsed = ticks - lastFrameTicks;
         lastFrameTicks = ticks;
+        elapsed += accumulator;
+        if(elapsed < FIXED_TIMESTEP) {
+            accumulator = elapsed;
+            continue;
+        }
+        while(elapsed >= FIXED_TIMESTEP) {
+            elapsed -= FIXED_TIMESTEP;
+        }
+        accumulator = elapsed;
         
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT || event.type == SDL_WINDOWEVENT_CLOSE) {
                 done = true;
-            } else if (event.type == SDL_KEYDOWN) {
-                if (mode == "STATE_GAME_LEVEL") {
-                    if (keys[SDL_SCANCODE_LEFT]) {
-                        if (cowPos > -1.5f) {
-                            cowMatrix = glm::mat4(1.0f);
-                            cowPos -= elapsed*60.0f;
-                            cowMatrix = glm::translate(cowMatrix, glm::vec3(cowPos, -0.6f, 0.0f));
-                        }
-                    }
-                    if (keys[SDL_SCANCODE_RIGHT]) {
-                        if (cowPos < 1.5f) {
-                            cowMatrix = glm::mat4(1.0f);
-                            cowPos += elapsed*60.0f;
-                            cowMatrix = glm::translate(cowMatrix, glm::vec3(cowPos, -0.6f, 0.0f));
-                        }
-                    }
-                    if (keys[SDL_SCANCODE_SPACE] && shootBullet == false) {
-                        shootBullet = true;
-                        shootLocation = cowPos;
-                    }
-                } else if (mode == "STATE_MAIN_MENU") {
-                    if (keys[SDL_SCANCODE_SPACE]) {
-                        mode = "STATE_GAME_LEVEL";
+            }
+        }
+        if (event.type == SDL_KEYDOWN) {
+            if (keys[SDL_SCANCODE_LEFT]) {
+                if (entities[1]->positionX > -1.5f) {
+                    entities[1]->accelerationX -= 0.01f;
+                    entities[1]->velocityX += entities[1]->accelerationX;
+                    
+                    entities[1]->positionX -= elapsed*entities[1]->velocityX;
+                    entities[1]->Update();
+                    
+                    if (entities[1]->positionX < (viewPosStartX+0.5f)) {
+                        viewPosStartX = entities[1]->positionX - 0.5f;
+                        viewMatrix = glm::translate(viewMatrix, glm::vec3(elapsed*entities[1]->velocityX, 0.0f, 0.0f));
                     }
                 }
             }
+            if (keys[SDL_SCANCODE_RIGHT]) {
+                if (entities[1]->positionX < 2.25f) {
+                    entities[1]->accelerationX += 0.01f;
+                    entities[1]->velocityX += entities[1]->accelerationX;
+                    
+                    entities[1]->positionX += elapsed*entities[1]->velocityX;
+                    entities[1]->Update();
+                    
+                    if (entities[1]->positionX > (viewPosStartX+0.5f)) {
+                        viewPosStartX = entities[1]->positionX - 0.5f;
+                        viewMatrix = glm::translate(viewMatrix, glm::vec3(-elapsed*entities[1]->velocityX, 0.0f, 0.0f));
+                    }
+                }
+            }
+            if (keys[SDL_SCANCODE_UP]) {
+                entities[1]->velocityY += 0.5f;
+                entities[1]->positionY += elapsed*entities[1]->velocityY;
+                entities[1]->Update();
+            }
         }
+        if (entities[1]->velocityX > 0) {
+            entities[1]->velocityX -= 0.01f;
+        } else if (entities[1]->velocityX < 0) {
+            entities[1]->velocityX += 0.01f;
+        }
+        
         glClear(GL_COLOR_BUFFER_BIT);
         
         program.SetProjectionMatrix(projectionMatrix);
         program.SetViewMatrix(viewMatrix);
         
-        if (mode == "STATE_GAME_LEVEL") {
-            program.SetModelMatrix(cowMatrix);
-            cowE.Draw(program);
-            
-            program.SetModelMatrix(alien1);
-            alien1Sprite.Draw(program);
-            program.SetModelMatrix(alien2);
-            alien2Sprite.Draw(program);
-            program.SetModelMatrix(alien3);
-            alien3Sprite.Draw(program);
-            program.SetModelMatrix(alien4);
-            alien4Sprite.Draw(program);
-            program.SetModelMatrix(alien5);
-            alien5Sprite.Draw(program);
-            program.SetModelMatrix(alien6);
-            alien6Sprite.Draw(program);
-            program.SetModelMatrix(alien7);
-            alien7Sprite.Draw(program);
-            program.SetModelMatrix(alien8);
-            alien8Sprite.Draw(program);
-            
-            if (shootBullet) {
-                bulletMatrix = glm::mat4(1.0f);
-                bulletForward += elapsed*0.5f;
-                bulletMatrix = glm::translate(bulletMatrix, glm::vec3(shootLocation, bulletForward, 0.0f));
-                bulletMatrix  = glm::scale(bulletMatrix, glm::vec3(0.15f, 0.15f, 0.0f));
-                
-                program.SetModelMatrix(bulletMatrix);
-                bulletE.Draw(program);
-            }
-            if (bulletForward > 1.0f) {
-                shootBullet = false;
-                bulletForward = -0.5f;
-            }
-            
-            if (bulletForward > 0.7) {
-                if (!alien1Dead && (shootLocation < -0.5 && shootLocation > -0.7)) {
-                    alien1Dead = true;
-                    alien1 = glm::mat4(1.0f);
-                    alien1 = glm::translate(alien1, glm::vec3(100, 100, 0.0f));
-                    shootBullet = false;
-                    bulletForward = -0.5f;
-                }
-                else if (!alien2Dead && (shootLocation < -0.1 && shootLocation > -0.3)) {
-                    alien2Dead = true;
-                    alien2 = glm::mat4(1.0f);
-                    alien2 = glm::translate(alien2, glm::vec3(100, 100, 0.0f));
-                    shootBullet = false;
-                    bulletForward = -0.5f;
-                }
-                else if (!alien3Dead && (shootLocation > 0.1 && shootLocation < 0.3)) {
-                    alien3Dead = true;
-                    alien3 = glm::mat4(1.0f);
-                    alien3 = glm::translate(alien3, glm::vec3(100, 100, 0.0f));
-                    shootBullet = false;
-                    bulletForward = -0.5f;
-                }
-                else if (!alien4Dead && (shootLocation > 0.5 && shootLocation < 0.7)) {
-                    alien4Dead = true;
-                    alien4 = glm::mat4(1.0f);
-                    alien4 = glm::translate(alien4, glm::vec3(100, 100, 0.0f));
-                    shootBullet = false;
-                    bulletForward = -0.5f;
-                }
-            }
-            if (bulletForward > 0.1) {
-                if (!alien5Dead && (shootLocation < -0.5 && shootLocation > -0.7)) {
-                    alien5Dead = true;
-                    alien5 = glm::mat4(1.0f);
-                    alien5 = glm::translate(alien5, glm::vec3(100, 100, 0.0f));
-                    shootBullet = false;
-                    bulletForward = -0.5f;
-                }
-                else if (!alien6Dead && (shootLocation < -0.1 && shootLocation > -0.3)) {
-                    alien6Dead = true;
-                    alien6 = glm::mat4(1.0f);
-                    alien6 = glm::translate(alien6, glm::vec3(100, 100, 0.0f));
-                    shootBullet = false;
-                    bulletForward = -0.5f;
-                }
-                else if (!alien7Dead && (shootLocation > 0.1 && shootLocation < 0.3)) {
-                    alien7Dead = true;
-                    alien7 = glm::mat4(1.0f);
-                    alien7 = glm::translate(alien7, glm::vec3(100, 100, 0.0f));
-                    shootBullet = false;
-                    bulletForward = -0.5f;
-                }
-                else if (!alien8Dead && (shootLocation > 0.5 && shootLocation < 0.7)) {
-                    alien8Dead = true;
-                    alien8 = glm::mat4(1.0f);
-                    alien8 = glm::translate(alien8, glm::vec3(100, 100, 0.0f));
-                    shootBullet = false;
-                    bulletForward = -0.5f;
-                }
-            }
-        } else if (mode == "STATE_MAIN_MENU") {
-            program.SetModelMatrix(letterC);
-            cSprite.Draw(program);
-            program.SetModelMatrix(letterO);
-            oSprite.Draw(program);
-            program.SetModelMatrix(letterW);
-            wSprite.Draw(program);
-            program.SetModelMatrix(letterG);
-            gSprite.Draw(program);
-            program.SetModelMatrix(letterU);
-            uSprite.Draw(program);
-            program.SetModelMatrix(letterN);
-            nSprite.Draw(program);
+        for (size_t i = 0; i < entities.size(); i++) {
+            program.SetModelMatrix(entities[i]->modelMatrix);
+            entities[i]->Draw(program);
         }
+        
+        if (!entities[1]->collidedBottom) {
+            entities[1]->velocityY += entities[1]->accelerationY;
+            entities[1]->positionY += elapsed*entities[1]->velocityY;
+            entities[1]->Update();
+        }
+        
+        //player and platforms
+        for (size_t i = 0; i < entities.size(); i++) {
+            if (entities[i]->name.size() == 9) { //platforms
+                float platformTop = entities[3]->positionY;
+                float playerBottom = entities[1]->positionY;
+                if (((platformTop-playerBottom)/2 < 0) &&
+                    (entities[1]->positionX < entities[i]->positionX+0.25f) &&
+                    (entities[1]->positionX > entities[i]->positionX-0.25f)){
+                    
+                    entities[1]->velocityY = 0.0f;
+                    
+                    entities[1]->positionY = entities[i]->positionY+0.35f;
+                    entities[1]->Update();
+                    entities[1]->collidedBottom = true;
+                    entities[i]->collidedTop = true;
+                } else {
+                    entities[1]->collidedBottom = false;
+                    entities[i]->collidedTop = false;
+                }
+            }
+        }
+        
         SDL_GL_SwapWindow(displayWindow);
     }
     
